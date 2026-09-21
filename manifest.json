@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "c0ze.qwen-studio",
+  "name": "Qwen Studio",
+  "version": "0.2.0",
+  "author": "c0ze",
+  "description": "Local Qwen image workspace with projects, references and image tools",
+  "kinds": ["bar-widget"],
+  "entryPoints": {"barWidget": "omarchy/BarWidget.qml"},
+  "barWidget": {"displayName": "Qwen Studio", "description": "Open the local image studio", "category": "Apps", "defaultSection": "right", "allowMultiple": false}
+}

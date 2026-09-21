@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+dist/
+*.egg-info/
+# Local audit notes and runtime data are never published.
+AUDIT.md
+.env
+.env.*
+*.log
+*.gguf
+*.safetensors
+*.part

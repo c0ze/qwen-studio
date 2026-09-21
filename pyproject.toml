@@ -1,0 +1,33 @@
+[project]
+name = "qwen-studio"
+version = "0.2.0"
+description = "Local Qwen image projects, reference editing and Omarchy integration"
+license = "MIT"
+readme = "README.md"
+authors = [{name = "c0ze"}]
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115",
+  "json5>=0.9",
+  "pillow>=11",
+  "uvicorn[standard]>=0.32",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[project.scripts]
+qwen-studio = "qwen_studio.server:main"
+qwen-studio-open = "qwen_studio.desktop:main"
+qwen-studio-install = "qwen_studio.desktop:install"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["qwen_studio"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

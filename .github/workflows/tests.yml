@@ -1,0 +1,20 @@
+name: Tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.11', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --extra dev --python ${{ matrix.python }}
+      - run: uv run pytest -q
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check qwen_studio/static/app.js && node --test tests/test_templates.mjs
+      - run: uv build
