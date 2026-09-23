@@ -77,11 +77,27 @@ class ComfyClient:
             headers={"Content-Type": "application/json"},
         )
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            return json.load(response)
+            body = response.read()
+            return json.loads(body) if body else {}
 
     def ready(self) -> bool:
         try:
             self.request_json("/system_stats", timeout=3)
+            return True
+        except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+            return False
+
+    def release_if_idle(self) -> bool:
+        """Unload models so VRAM is free while ComfyUI has no work."""
+        try:
+            queue = self.request_json("/queue", timeout=5)
+            if queue.get("queue_running") or queue.get("queue_pending"):
+                return False
+            self.request_json(
+                "/free",
+                method="POST",
+                payload={"unload_models": True, "free_memory": True},
+            )
             return True
         except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
             return False

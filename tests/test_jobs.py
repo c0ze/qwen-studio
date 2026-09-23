@@ -132,3 +132,17 @@ def test_relative_gallery_root_accepts_generated_image(tmp_path, monkeypatch):
         await runner.stop()
         assert job.status == 'done'
     asyncio.run(run())
+
+
+def test_models_released_once_the_queue_drains(tmp_path):
+    async def run():
+        fake = FakeComfy(tmp_path)
+        runner = JobRunner(fake, Gallery(tmp_path))
+        enqueue(runner)
+        enqueue(runner)
+        runner.start()
+        await asyncio.wait_for(runner._queue.join(), 2)
+        await runner.stop()
+        assert len(fake.calls) == 2
+        assert fake.released == 1
+    asyncio.run(run())

@@ -57,9 +57,14 @@ class FakeComfy:
         self._ready = True
         self.fail = False
         self.n = 0
+        self.released = 0
 
     def ready(self) -> bool:
         return self._ready
+
+    def release_if_idle(self) -> bool:
+        self.released += 1
+        return True
 
     def generate(self, prompt, negative_prompt, width, height, steps, seed):
         if self.fail:

@@ -198,6 +198,13 @@ class JobRunner:
             finally:
                 if job is not None:
                     self._cleanup(job)
+                if job_id is not None and self._queue.empty():
+                    # Other clients (the MCP server) share ComfyUI, so this
+                    # only unloads when ComfyUI's own queue is empty too.
+                    try:
+                        await asyncio.to_thread(self.client.release_if_idle)
+                    except Exception:  # noqa: BLE001 — freeing VRAM is best-effort
+                        pass
                 self._queue.task_done()
 
     def _generate(self, job: Job) -> Path:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import urllib.error
+
 import pytest
 
 from qwen_studio.comfy import ComfyClient, resolve_seed, validate_params
@@ -122,3 +124,29 @@ def test_repeated_generation_saves_a_fresh_asset(monkeypatch, tmp_path):
     assert first['10']['inputs']['filename_prefix'] != second['10']['inputs']['filename_prefix']
     assert first['10']['inputs']['filename_prefix'].startswith('LMStudio/Qwen-Image-2512-')
     assert {k: v for k, v in first.items() if k != '10'} == {k: v for k, v in second.items() if k != '10'}
+
+
+def test_release_if_idle_unloads_only_when_comfy_is_idle(monkeypatch):
+    client = ComfyClient()
+    calls = []
+    queue = {"queue_running": [["busy"]], "queue_pending": []}
+
+    def fake(path, **kwargs):
+        calls.append(path)
+        return queue if path == "/queue" else {}
+
+    monkeypatch.setattr(client, "request_json", fake)
+    assert not client.release_if_idle()
+    queue["queue_running"] = []
+    assert client.release_if_idle()
+    assert calls == ["/queue", "/queue", "/free"]
+
+
+def test_release_if_idle_tolerates_offline_comfy(monkeypatch):
+    client = ComfyClient()
+
+    def offline(*args, **kwargs):
+        raise urllib.error.URLError("down")
+
+    monkeypatch.setattr(client, "request_json", offline)
+    assert not client.release_if_idle()
