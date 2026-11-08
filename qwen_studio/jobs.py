@@ -27,6 +27,7 @@ class Job:
     seed: int
     project: str = ""
     operation: str = "generate"
+    model: str = "qwen"
     sources: list[str] = field(default_factory=list)
     snapshots: list[Path] = field(default_factory=list, repr=False)
     workspace: str | None = field(default=None, repr=False)
@@ -43,6 +44,7 @@ class Job:
             "id": self.id,
             "project": self.project,
             "operation": self.operation,
+            "model": self.model,
             "sources": self.sources,
             "prompt": self.prompt,
             "negative_prompt": self.negative_prompt,
@@ -101,6 +103,7 @@ class JobRunner:
         steps: int,
         seed: int,
         *, project: str = "", operation: str = "generate", sources: list[str] | None = None,
+        model: str = "qwen",
     ) -> Job:
         if self._stopping:
             raise RuntimeError("Studio is shutting down")
@@ -113,7 +116,7 @@ class JobRunner:
             height=height,
             steps=steps,
             seed=resolve_seed(seed),
-            project=project, operation=operation, sources=list(sources or []),
+            project=project, operation=operation, sources=list(sources or []), model=model,
         )
         if job.sources:
             job.workspace = tempfile.mkdtemp(prefix="qwen-studio-job-")
@@ -185,6 +188,7 @@ class JobRunner:
                         "seed": job.seed,
                         "created_at": job.created_at,
                         "operation": job.operation,
+                        "model": job.model if job.operation == "generate" else None,
                         "source": job.sources[0] if job.sources else None,
                     },
                 )
@@ -223,4 +227,5 @@ class JobRunner:
             job.height,
             job.steps,
             job.seed,
+            model=job.model,
         )

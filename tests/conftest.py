@@ -58,6 +58,13 @@ class FakeComfy:
         self.fail = False
         self.n = 0
         self.released = 0
+        self.object_info: dict = {}
+
+    def request_json(self, path, **kwargs):
+        assert path == "/object_info"
+        if self.object_info is None:
+            raise OSError("ComfyUI is offline")
+        return self.object_info
 
     def ready(self) -> bool:
         return self._ready
@@ -66,7 +73,7 @@ class FakeComfy:
         self.released += 1
         return True
 
-    def generate(self, prompt, negative_prompt, width, height, steps, seed):
+    def generate(self, prompt, negative_prompt, width, height, steps, seed, model="qwen"):
         if self.fail:
             raise RuntimeError("comfy exploded")
         self.n += 1
@@ -80,6 +87,7 @@ class FakeComfy:
                 "height": height,
                 "steps": steps,
                 "seed": seed,
+                "model": model,
             }
         )
         return path

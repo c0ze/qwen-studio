@@ -169,3 +169,72 @@ def test_rejects_cross_origin_writes(studio):
     assert image.exists()
     assert not fake.calls
     assert client.delete('/api/images/keep.png', headers={'Origin': 'http://testserver'}).status_code == 200
+
+
+def _moss_ready(fake) -> None:
+    from qwen_studio import moss
+    fake.object_info = {
+        "UNETLoader": {"input": {"required": {"unet_name": [[moss.MODEL]]}}},
+        "CLIPLoader": {"input": {"required": {"clip_name": [[moss.ENCODER]], "type": [["moss_image"]]}}},
+        "VAELoader": {"input": {"required": {"vae_name": [[moss.VAE]]}}},
+    }
+
+
+def test_generate_with_moss_records_the_model(studio) -> None:
+    client, fake, gallery = studio
+    _moss_ready(fake)
+    response = client.post("/api/generate", json={"prompt": "tower", "model": "moss", "negative_prompt": "", "steps": 25, "seed": 5})
+    assert response.status_code == 200
+    assert response.json()["model"] == "moss"
+    done = _wait_job(client, response.json()["id"])
+    assert done["status"] == "done"
+    assert fake.calls[0]["model"] == "moss"
+    sidecar = json.loads((gallery.root / done["filename"]).with_suffix(".json").read_text())
+    assert sidecar["model"] == "moss"
+    assert client.get("/api/images").json()["images"][0]["model"] == "moss"
+
+
+def test_qwen_is_the_default_model(studio) -> None:
+    client, fake, _gallery = studio
+    done = _wait_job(client, client.post("/api/generate", json={"prompt": "tower"}).json()["id"])
+    assert done["model"] == "qwen"
+    assert fake.calls[0]["model"] == "qwen"
+
+
+def test_moss_unavailable_is_a_conflict(studio) -> None:
+    client, fake, _gallery = studio
+    response = client.post("/api/generate", json={"prompt": "tower", "model": "moss"})
+    assert response.status_code == 409
+    assert not fake.calls
+
+
+def test_moss_only_generates_from_text(studio) -> None:
+    client, fake, gallery = studio
+    _moss_ready(fake)
+    write_png(gallery.root / "source.png")
+    response = client.post("/api/generate", json={"prompt": "night", "model": "moss", "operation": "edit", "sources": ["source.png"]})
+    assert response.status_code == 400
+    assert "MOSS" in response.json()["detail"]
+
+
+def test_unknown_model_is_rejected(studio) -> None:
+    client, _fake, _gallery = studio
+    assert client.post("/api/generate", json={"prompt": "tower", "model": "sdxl"}).status_code == 422
+
+
+def test_capabilities_report_moss(studio) -> None:
+    client, fake, _gallery = studio
+    assert client.get("/api/capabilities").json()["moss"] is False
+    _moss_ready(fake)
+    assert client.get("/api/capabilities").json()["moss"] is True
+
+
+def test_moss_queues_while_comfy_is_offline(studio) -> None:
+    # Studio starts ComfyUI on demand, so an offline ComfyUI must not block
+    # MOSS any more than it blocks Qwen text generation.
+    client, fake, _gallery = studio
+    fake.object_info = None
+    response = client.post("/api/generate", json={"prompt": "tower", "model": "moss"})
+    assert response.status_code == 200
+    assert _wait_job(client, response.json()["id"])["status"] == "done"
+    assert fake.calls[0]["model"] == "moss"

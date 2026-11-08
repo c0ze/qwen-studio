@@ -1,6 +1,6 @@
 # Qwen Studio
 
-A local image workspace for **Qwen-Image-2512** and **Qwen-Image-Edit-2511**, powered by ComfyUI. Includes an Omarchy custom app, desktop launcher, user service, and optional bar plugin.
+A local image workspace for **Qwen-Image-2512**, **Qwen-Image-Edit-2511** and, optionally, **MOSS-Image**, powered by ComfyUI. Includes an Omarchy custom app, desktop launcher, user service, and optional bar plugin.
 
 - Create images with 12 editable style templates and exact, reusable seeds.
 - Organize assets into persistent project folders; import, move, rename folders, search, and download.
@@ -47,6 +47,24 @@ uv run python -m qwen_studio.models
 ```
 
 This downloads only [Unsloth's Qwen Edit GGUF](https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF); it reuses the encoder and VAE. Model weights are not included in this repository and retain their own licenses. Edit controls display readiness based on the running ComfyUI node/model list.
+
+### MOSS-Image (optional)
+
+[MOSS-Image](https://github.com/OpenMOSS/MOSS-Image) (OpenMOSS, Apache-2.0) is a second text-to-image model: a 5B DiT in the FLUX.2 latent space with a Qwen3.5-9B text encoder. It is strong at rendered text and readable signage. Choose **Create from text · MOSS Image** in the Workflow menu. It does not do reference edits or outpainting.
+
+It needs a ComfyUI with native MOSS support, which landed on upstream master after v0.40.0 (`e087d8f6` and follow-ups). To download the **15.4 GB** of int8 files from [Comfy-Org/MOSS-Image](https://huggingface.co/Comfy-Org/MOSS-Image) with SHA-256 verification:
+
+```bash
+uv run python -m qwen_studio.models moss
+```
+
+| Location inside ComfyUI | File |
+| --- | --- |
+| `models/diffusion_models/` | `moss_image_sft_int8_convrot.safetensors` |
+| `models/text_encoders/` | `qwen3.5_9b_int8_convrot.safetensors` |
+| `models/vae/` | `flux2-vae_small.safetensors` |
+
+Studio uses the upstream reference graph: 25 steps, CFG 2.5, `er_sde`, skip-layer guidance on layer 22 for the first half of sampling, and an empty negative prompt. Steps and the negative prompt are remembered per model, so switching between Qwen and MOSS restores each model's own values (or its defaults). On an RX 9060 XT (16 GB, ROCm 7.0, `--lowvram`) a 1024² image samples at about 1.4 s per step.
 
 ## Omarchy installation
 
@@ -102,6 +120,7 @@ Anime, Cartoon, Realistic, Medieval, Ink pen, Stylized, Watercolor, Oil painting
 | `COMFYUI_URL` | `http://127.0.0.1:8188` |
 | `QWEN_MODEL` | `qwen-image-2512-Q4_K_S.gguf` |
 | `QWEN_EDIT_MODEL` | `qwen-image-edit-2511-Q4_K_S.gguf` |
+| `MOSS_MODEL` | `moss_image_sft_int8_convrot.safetensors` |
 | `QWEN_STUDIO_HOST` | `127.0.0.1` |
 | `QWEN_STUDIO_PORT` | `8790` |
 

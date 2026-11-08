@@ -18,6 +18,15 @@ let projects = [];
 let references = [];
 let editingProject = null;
 let editAvailable = false;
+let capability = null;
+let lastWorkflow = "generate";
+// Steps and negative prompt are kept per model: switching models stores the
+// current values and restores the other model's own (or its defaults).
+const MODEL_DEFAULTS = { qwen: { negative: DEFAULT_NEGATIVE, steps: "30" }, moss: { negative: "", steps: "25" } };
+const MODEL_LABELS = { qwen: "Qwen 2512", moss: "MOSS Image" };
+let modelSettings = {};
+const modelOf = (choice) => choice === "moss" ? "moss" : "qwen";
+const currentModelSettings = () => ({ negative: $("negative").value, steps: $("steps").value });
 const draftKey = "qwen-studio-draft-v1";
 
 function setJob(text, error = false) {
@@ -39,11 +48,12 @@ async function getJson(url, options = {}) {
 function settings() {
   return {
     prompt: $("prompt").value,
-    project: $("generation-project").value, operation: $("operation").value, sources: references.map(item => item.filename),
+    project: $("generation-project").value, operation: $("operation").value, model: modelOf($("operation").value), sources: references.map(item => item.filename),
     style_id: selectedStyle, style_prompt: $("style-prompt").value, style_negative: $("style-negative").value,
     negative_prompt: $("negative").value,
     width: Number($("width").value), height: Number($("height").value),
     steps: Number($("steps").value), seed: $("seed").value.trim() || "0",
+    model_settings: modelSettings,
   };
 }
 function syncFrame() {
@@ -58,13 +68,21 @@ function saveDraft() {
   try { localStorage.setItem(draftKey, JSON.stringify({ ...settings(), references })); } catch { /* Storage is optional. */ }
 }
 function applySettings(data) {
+  const choice = data.operation === "extend" ? "extend" : data.operation === "edit" ? "edit"
+    : modelOf(data.operation) !== "qwen" ? data.operation : modelOf(data.model) !== "qwen" ? data.model : "generate";
+  if (modelOf(choice) !== modelOf(lastWorkflow)) modelSettings[modelOf(lastWorkflow)] = currentModelSettings();
+  if (data.model_settings && typeof data.model_settings === "object") {
+    modelSettings = Object.fromEntries(Object.entries(data.model_settings).filter(([model, value]) =>
+      model in MODEL_DEFAULTS && typeof value?.negative === "string" && /^\d+$/.test(String(value?.steps))));
+  }
   for (const [key, id] of Object.entries({ prompt: "prompt", negative_prompt: "negative", width: "width", height: "height", steps: "steps", seed: "seed" })) {
     if (data[key] != null) $(id).value = String(data[key]);
   }
-  $("operation").value = data.operation === "extend" ? "extend" : data.operation === "edit" ? "edit" : "generate";
+  $("operation").value = choice;
+  lastWorkflow = choice;
   if ([...$("generation-project").options].some(option => option.value === data.project)) $("generation-project").value = data.project;
   references = (data.references || []).filter(item => typeof item?.filename === "string").slice(0, 3);
-  renderReferences();
+  renderReferences(); renderCapability();
   setStyle(data.style_id || "", data.style_prompt, data.style_negative);
   syncFrame();
 }
@@ -136,8 +154,12 @@ form.addEventListener("submit", async (event) => {
     $("prompt").focus();
     return;
   }
-  const body = { ...generationSettings(settings()), project: $("generation-project").value,
-    operation: $("operation").value, sources: $("operation").value === "generate" ? [] : references.map(item => item.filename) };
+  const choice = $("operation").value, operation = modelOf(choice) !== "qwen" ? "generate" : choice;
+  const body = { ...generationSettings(settings()), project: $("generation-project").value, operation, model: modelOf(choice),
+    sources: operation === "generate" ? [] : references.map(item => item.filename) };
+  if (body.model !== "qwen" && capability?.online && !capability[body.model]) {
+    setJob(`${MODEL_LABELS[body.model]}: ${capability[`${body.model}_reason`]}`, true); return;
+  }
   if (body.operation !== "generate" && (!editAvailable || !body.sources.length)) {
     setJob(!editAvailable ? $("edit-capability").textContent : "Select a reference image first.", true); return;
   }
@@ -200,6 +222,7 @@ function openLightbox(item) {
   current = item;
   $("lb-img").src = `${item.url}?v=${item.mtime}`; $("lb-img").alt = item.filename;
   $("lb-meta").textContent = [item.filename, item.width && item.height ? `${item.width}×${item.height}` : null,
+    MODEL_LABELS[item.model] ?? null,
     item.steps != null ? `${item.steps} steps` : null, item.seed != null ? `seed ${item.seed}` : null,
     new Date(item.created_at).toLocaleString()].filter(Boolean).join(" · ");
   $("lb-prompt").textContent = item.prompt || "(no prompt stored)";
@@ -255,7 +278,8 @@ async function refreshJobs() {
   const rows = [...active, ...recent].map((job) => {
     const row = document.createElement("div"); row.className = `queue-item ${job.status}`;
     const label = document.createElement("p");
-    label.textContent = `${job.status} · ${job.operation || "generate"} · ${job.prompt || "Image copy"}`; row.append(label);
+    const workflow = modelOf(job.model) !== "qwen" ? `generate · ${MODEL_LABELS[job.model]}` : job.operation || "generate";
+    label.textContent = `${job.status} · ${workflow} · ${job.prompt || "Image copy"}`; row.append(label);
     const detail = document.createElement("small"); detail.textContent = job.error || `${job.width}×${job.height} · seed ${job.seed}`; row.append(detail);
     if (job.status === "queued") {
       const cancel = document.createElement("button"); cancel.type = "button"; cancel.textContent = "Cancel queued job";
@@ -351,7 +375,7 @@ $('asset-move').addEventListener('click', async () => {
   finally { $('asset-move').disabled = false; }
 });
 function renderReferences() {
-  $('reference-panel').hidden = $('operation').value === 'generate';
+  $('reference-panel').hidden = ['generate', 'moss'].includes($('operation').value);
   $('references').replaceChildren(...references.map((item, index) => {
     const row = document.createElement('div'); row.className = 'reference';
     const image = document.createElement('img'); image.src = item.url; image.alt = `Picture ${index + 1}`;
@@ -369,11 +393,30 @@ function useReference(item, extend = false) {
   }
   $('operation').value = extend ? 'extend' : 'edit';
   $('generation-project').value = item.project || '';
-  renderReferences(); saveDraft();
+  switchWorkflow(); saveDraft();
   document.querySelector('.console').scrollIntoView({ behavior: 'smooth', block: 'start' });
   $('prompt').focus();
 }
-$('operation').addEventListener('change', () => { renderReferences(); saveDraft(); });
+function switchWorkflow() {
+  const from = modelOf(lastWorkflow), to = modelOf($('operation').value);
+  lastWorkflow = $('operation').value;
+  if (from !== to) {
+    modelSettings[from] = currentModelSettings();
+    const next = modelSettings[to] || MODEL_DEFAULTS[to];
+    $('negative').value = next.negative; $('steps').value = String(next.steps);
+  }
+  renderReferences(); renderCapability(); syncFrame();
+}
+$('operation').addEventListener('change', () => { switchWorkflow(); saveDraft(); });
+function renderCapability() {
+  if (!capability) return;
+  const choice = $('operation').value;
+  const ready = { moss: '25 steps and an empty negative prompt are recommended' };
+  $('edit-capability').textContent = choice in ready
+    ? (capability[choice] ? `${MODEL_LABELS[choice]} ready · ${ready[choice]}`
+      : capability.online ? `${MODEL_LABELS[choice]}: ${capability[`${choice}_reason`]}` : `${MODEL_LABELS[choice]} · ComfyUI starts with the first job`)
+    : capability.edit ? 'Qwen Edit ready · up to 3 reference images' : `Reference model: ${capability.reason}`;
+}
 $('lb-reference').addEventListener('click', () => {
   const item = current; lightbox.close(); useReference(item);
   setJob('Describe the new scene or the change. Refer to Picture 1, Picture 2, or Picture 3.');
@@ -396,9 +439,9 @@ $('asset-upload').addEventListener('change', () => upload($('asset-upload'), fal
 $('reference-upload').addEventListener('change', () => upload($('reference-upload'), true));
 async function refreshCapabilities() {
   try {
-    const data = await getJson('/api/capabilities'); editAvailable = data.edit;
-    $('edit-capability').textContent = data.edit ? 'Qwen Edit ready · up to 3 reference images' : `Reference model: ${data.reason}`;
-  } catch { editAvailable = false; $('edit-capability').textContent = 'Reference model unavailable. Local crop, fit, and upscale still work.'; }
+    capability = await getJson('/api/capabilities'); editAvailable = capability.edit;
+    renderCapability();
+  } catch { capability = null; editAvailable = false; $('edit-capability').textContent = 'Models unavailable. Local crop, fit, and upscale still work.'; }
   setTimeout(refreshCapabilities, 30000);
 }
 $('asset-double').addEventListener('click', () => {

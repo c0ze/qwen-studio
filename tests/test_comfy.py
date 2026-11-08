@@ -150,3 +150,46 @@ def test_release_if_idle_tolerates_offline_comfy(monkeypatch):
 
     monkeypatch.setattr(client, "request_json", offline)
     assert not client.release_if_idle()
+
+
+def test_qwen_remains_the_default_workflow():
+    graph = ComfyClient().workflow("tower", "blurry", 1024, 1024, 30, 7)
+    assert graph["1"]["class_type"] == "UnetLoaderGGUF"
+    assert graph["3"]["inputs"]["type"] == "qwen_image"
+
+
+def test_moss_workflow_follows_reference_graph():
+    from qwen_studio import moss
+
+    graph = ComfyClient().workflow("tower", "", 1024, 1536, 25, 7, model="moss")
+    assert graph["1"]["class_type"] == "UNETLoader"
+    assert graph["1"]["inputs"]["unet_name"] == moss.MODEL
+    # Skip-layer guidance on layer 22 for the first half replaces the
+    # reference pipeline's uncond_skip_layers=[22].
+    assert graph["2"]["class_type"] == "SkipLayerGuidanceDiTSimple"
+    assert graph["2"]["inputs"]["single_layers"] == "22"
+    assert graph["2"]["inputs"]["end_percent"] == 0.5
+    assert graph["3"]["inputs"] == {"clip_name": moss.ENCODER, "type": "moss_image", "device": "default"}
+    assert graph["4"]["inputs"]["vae_name"] == moss.VAE
+    assert graph["7"]["class_type"] == "EmptyFlux2LatentImage"
+    assert (graph["7"]["inputs"]["width"], graph["7"]["inputs"]["height"]) == (1024, 1536)
+    sampler = graph["8"]["inputs"]
+    assert (sampler["cfg"], sampler["sampler_name"], sampler["steps"], sampler["seed"]) == (2.5, "er_sde", 25, 7)
+    assert sampler["model"] == ["2", 0]
+    assert graph["10"]["class_type"] == "SaveImage"
+
+
+def test_unknown_model_is_rejected():
+    with pytest.raises(ValueError, match="unknown model"):
+        ComfyClient().workflow("tower", "", 1024, 1024, 25, 7, model="sdxl")
+
+
+def test_moss_generation_saves_under_its_own_prefix(monkeypatch, tmp_path):
+    client = ComfyClient()
+    monkeypatch.setattr(client, "ensure", lambda: None)
+    submissions = []
+    monkeypatch.setattr(client, "request_json", lambda *a, **kw: submissions.append(kw["payload"]["prompt"]) or {"prompt_id": "x"})
+    monkeypatch.setattr(client, "_wait_for_image", lambda *args: tmp_path / "image.png")
+    client.generate("tower", "", 1024, 1024, 25, 7, model="moss")
+    assert submissions[0]["1"]["class_type"] == "UNETLoader"
+    assert submissions[0]["10"]["inputs"]["filename_prefix"].startswith("LMStudio/MOSS-Image-")

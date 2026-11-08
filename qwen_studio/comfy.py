@@ -11,6 +11,11 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from qwen_studio import moss
+
+# Text-to-image models other than Qwen 2512, each a module with workflow() and PREFIX.
+EXTRA_MODELS = {"moss": moss}
+
 COMFY_URL = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188").rstrip("/")
 COMFY_DIR = Path(os.environ.get("COMFYUI_DIR", str(Path.home() / "ComfyUI"))).expanduser().resolve()
 OUTPUT_DIR = COMFY_DIR / "output"
@@ -132,7 +137,12 @@ class ComfyClient:
         height: int,
         steps: int,
         seed: int,
+        model: str = "qwen",
     ) -> dict[str, Any]:
+        if model in EXTRA_MODELS:
+            return EXTRA_MODELS[model].workflow(prompt, negative_prompt, width, height, steps, seed)
+        if model != "qwen":
+            raise ValueError(f"unknown model: {model}")
         return {
             "1": {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": MODEL_NAME}},
             "2": {
@@ -197,12 +207,14 @@ class ComfyClient:
         steps: int,
         seed: int,
         output_dir: Path = OUTPUT_DIR,
+        model: str = "qwen",
     ) -> Path:
         self.ensure()
-        workflow = self.workflow(prompt, negative_prompt, width, height, steps, seed)
+        workflow = self.workflow(prompt, negative_prompt, width, height, steps, seed, model)
         # Reused seeds may cache upstream pixels, but each request needs a new
         # saved asset, including after an earlier asset was deleted.
-        workflow["10"]["inputs"]["filename_prefix"] = f"{FILENAME_PREFIX}-{uuid.uuid4().hex}"
+        prefix = EXTRA_MODELS[model].PREFIX if model in EXTRA_MODELS else FILENAME_PREFIX
+        workflow["10"]["inputs"]["filename_prefix"] = f"{prefix}-{uuid.uuid4().hex}"
         result = self.request_json(
             "/prompt",
             method="POST",
@@ -228,7 +240,7 @@ class ComfyClient:
                 status = entry.get("status", {})
                 if status.get("status_str") == "error":
                     messages = status.get("messages", [])
-                    raise RuntimeError(f"Qwen image generation failed: {messages}")
+                    raise RuntimeError(f"Image generation failed: {messages}")
                 # This workflow saves the final image in node 10. Other nodes
                 # can expose previews or temporary images that are not assets.
                 output = entry.get("outputs", {}).get("10", {})
@@ -247,7 +259,7 @@ class ComfyClient:
                         return path
                 if status.get("completed") or status.get("status_str") == "success":
                     raise RuntimeError(
-                        "Qwen generation completed without a valid image in LMStudio"
+                        "Generation completed without a valid image in LMStudio"
                     )
             time.sleep(2)
-        raise TimeoutError("Qwen image generation exceeded the 30-minute timeout")
+        raise TimeoutError("Image generation exceeded the 30-minute timeout")

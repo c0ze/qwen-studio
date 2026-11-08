@@ -22,12 +22,14 @@ from qwen_studio.gallery import Gallery
 from qwen_studio.jobs import JobRunner
 
 STATIC_DIR = Path(__file__).parent / "static"
+MODEL_LABELS = {"moss": "MOSS Image"}
 
 
 class GenerateRequest(BaseModel):
     prompt: str = ""
     project: str = ""
     operation: Literal["generate", "edit", "extend", "crop", "fit", "upscale"] = "generate"
+    model: Literal["qwen", "moss"] = "qwen"
     sources: list[str] = Field(default_factory=list, max_length=3)
     negative_prompt: str = DEFAULT_NEGATIVE
     width: int = 1024
@@ -174,6 +176,8 @@ def create_app(
     @app.post("/api/generate")
     async def generate(body: GenerateRequest) -> dict:
         gallery.project_dir(body.project)
+        if body.model != "qwen" and body.operation != "generate":
+            raise ValueError(f"{MODEL_LABELS[body.model]} only creates images from text")
         if body.operation in {"generate", "edit", "extend"}:
             prompt = validate_params(body.prompt, body.width, body.height, body.steps, body.seed)
         else:
@@ -190,10 +194,13 @@ def create_app(
             raise ValueError("this operation takes one source image")
         for source in body.sources:
             gallery.resolve(source)
-        if body.operation in {"edit", "extend"}:
+        if body.operation in {"edit", "extend"} or body.model != "qwen":
             from qwen_studio.editing import capabilities
             cap = await asyncio.to_thread(capabilities, client)
-            if not cap["edit"]:
+            # An offline ComfyUI is started by the job, as for Qwen generation.
+            if body.model != "qwen" and cap["online"] and not cap[body.model]:
+                raise HTTPException(409, cap[f"{body.model}_reason"])
+            if body.operation in {"edit", "extend"} and not cap["edit"]:
                 raise HTTPException(409, cap["reason"])
         if body.operation == "extend":
             from qwen_studio.imaging import load_image
@@ -207,7 +214,7 @@ def create_app(
             body.height,
             body.steps,
             body.seed,
-            project=body.project, operation=body.operation, sources=body.sources,
+            project=body.project, operation=body.operation, sources=body.sources, model=body.model,
         )
         return job.as_dict()
 

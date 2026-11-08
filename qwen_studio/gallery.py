@@ -34,12 +34,14 @@ class ImageRecord:
     project: str = ""
     operation: str | None = None
     source: str | None = None
+    model: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "filename": self.filename,
             "project": self.project,
             "operation": self.operation,
+            "model": self.model,
             "source": self.source,
             "url": self.url,
             "width": self.width,
@@ -392,6 +394,7 @@ class Gallery:
             steps=pick("steps", int),
             operation=pick("operation", str),
             source=pick("source", str),
+            model=pick("model", str),
         )
 
     def _read_sidecar(self, path: Path) -> dict[str, Any]:

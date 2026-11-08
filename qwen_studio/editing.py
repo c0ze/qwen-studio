@@ -4,20 +4,47 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
+from qwen_studio import moss
 from qwen_studio.comfy import COMFY_DIR, EDIT_MODEL, OUTPUT_DIR
 from qwen_studio.imaging import load_image, outpaint_input
+
+
+def _options(nodes: dict, node: str, field: str) -> list:
+    """Choices of a loader input; classic nodes use [[...]], V3 combos {"options": [...]}."""
+    spec = nodes.get(node, {}).get("input", {}).get("required", {}).get(field) or [[]]
+    if isinstance(spec[0], list):
+        return spec[0]
+    if len(spec) > 1 and isinstance(spec[1], dict):
+        return spec[1].get("options", [])
+    return []
+
+
+def _moss_status(nodes: dict) -> tuple[bool, str]:
+    if "moss_image" not in _options(nodes, "CLIPLoader", "type"):
+        return False, "Update ComfyUI to a version with native MOSS-Image support."
+    for node, field, name, folder in [
+        ("UNETLoader", "unet_name", moss.MODEL, "diffusion_models"),
+        ("CLIPLoader", "clip_name", moss.ENCODER, "text_encoders"),
+        ("VAELoader", "vae_name", moss.VAE, "vae"),
+    ]:
+        if name not in _options(nodes, node, field):
+            return False, f"Install {name} in ComfyUI/models/{folder}."
+    return True, "Ready"
 
 
 def capabilities(client) -> dict:
     try:
         nodes = client.request_json("/object_info", timeout=5)
-        models = nodes.get("UnetLoaderGGUF", {}).get("input", {}).get("required", {}).get("unet_name", [[]])[0]
+        models = _options(nodes, "UnetLoaderGGUF", "unet_name")
         available = EDIT_MODEL in models and "TextEncodeQwenImageEditPlus" in nodes
-        return {"edit": available, "reference_limit": 3, "edit_model": EDIT_MODEL,
+        moss_ready, moss_reason = _moss_status(nodes)
+        return {"online": True, "edit": available, "reference_limit": 3, "edit_model": EDIT_MODEL,
                 "reason": "Ready" if available else f"Install {EDIT_MODEL} in ComfyUI/models/diffusion_models and ComfyUI-GGUF.",
+                "moss": moss_ready, "moss_model": moss.MODEL, "moss_reason": moss_reason,
                 "upscale": "Lanczos (resampling, not AI detail generation)"}
     except (OSError, ValueError, AttributeError):
-        return {"edit": False, "reference_limit": 3, "edit_model": EDIT_MODEL, "reason": "ComfyUI is unavailable", "upscale": "Lanczos"}
+        return {"online": False, "edit": False, "reference_limit": 3, "edit_model": EDIT_MODEL, "reason": "ComfyUI is unavailable",
+                "moss": False, "moss_model": moss.MODEL, "moss_reason": "ComfyUI is unavailable", "upscale": "Lanczos"}
 
 
 def workflow(client, prompt, negative, width, height, steps, seed, inputs, operation):

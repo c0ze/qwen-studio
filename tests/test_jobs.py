@@ -48,7 +48,7 @@ def test_stop_finishes_running_job_and_cancels_queue(tmp_path):
         release = threading.Event()
 
         class BlockingComfy(FakeComfy):
-            def generate(self, *args):
+            def generate(self, *args, **kwargs):
                 started.set()
                 assert release.wait(timeout=3)
                 return super().generate(*args)
@@ -86,7 +86,7 @@ def test_generated_external_path_never_writes_sidecar(tmp_path):
         write_png(archive / "image.png")
 
         class ExternalComfy:
-            def generate(self, *args):
+            def generate(self, *args, **kwargs):
                 return outside
 
         runner = JobRunner(ExternalComfy(), Gallery(archive))
@@ -106,7 +106,7 @@ def test_reserved_filename_gets_escaped_media_url(tmp_path):
         path = write_png(tmp_path / "image #1?.png")
 
         class NamedComfy:
-            def generate(self, *args):
+            def generate(self, *args, **kwargs):
                 return path
 
         runner = JobRunner(NamedComfy(), Gallery(tmp_path))
