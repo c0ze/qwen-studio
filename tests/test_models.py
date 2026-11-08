@@ -39,3 +39,17 @@ def test_default_bundle_is_qwen_edit(monkeypatch):
 def test_unknown_bundle_is_refused():
     with pytest.raises(SystemExit, match="usage"):
         models.main(["sdxl"])
+
+
+def test_nitro_bundle_installs_model_encoder_lora_and_vae(monkeypatch):
+    from qwen_studio import nitro
+    installed = []
+    monkeypatch.setattr(models, "install", lambda *entry: installed.append(entry))
+    models.main(["nitro"])
+    assert [(folder, name) for folder, name, _url, _sha in installed] == [
+        ("diffusion_models", nitro.MODEL),
+        ("text_encoders", nitro.ENCODER),
+        ("loras", nitro.LORA),
+        ("vae", nitro.VAE),
+    ]
+    assert all(url.endswith(name) and len(sha) == 64 for _f, name, url, sha in installed)

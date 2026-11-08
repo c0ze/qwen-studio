@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import time
 
+import pytest
+
 from tests.conftest import write_png
 
 
@@ -238,3 +240,81 @@ def test_moss_queues_while_comfy_is_offline(studio) -> None:
     assert response.status_code == 200
     assert _wait_job(client, response.json()["id"])["status"] == "done"
     assert fake.calls[0]["model"] == "moss"
+
+
+def _nitro_ready(fake) -> None:
+    from qwen_studio import nitro
+    fake.object_info = {
+        "UnetLoaderGGUF": {"input": {"required": {"unet_name": [[nitro.MODEL]]}}},
+        "CLIPLoaderGGUF": {"input": {"required": {"clip_name": [[nitro.ENCODER]], "type": [["lumina2"]]}}},
+        "VAELoader": {"input": {"required": {"vae_name": [[nitro.VAE]]}}},
+        "LoraLoaderModelOnly": {"input": {"required": {"lora_name": [[nitro.LORA]]}}},
+    }
+
+
+def test_generate_with_nitro_in_one_step(studio) -> None:
+    client, fake, gallery = studio
+    _nitro_ready(fake)
+    response = client.post("/api/generate", json={"prompt": "tower", "model": "nitro", "negative_prompt": "", "steps": 1, "seed": 5})
+    assert response.status_code == 200
+    done = _wait_job(client, response.json()["id"])
+    assert done["status"] == "done"
+    assert (fake.calls[0]["model"], fake.calls[0]["steps"]) == ("nitro", 1)
+    sidecar = json.loads((gallery.root / done["filename"]).with_suffix(".json").read_text())
+    assert sidecar["model"] == "nitro"
+
+
+def test_nitro_rejects_qwen_step_counts(studio) -> None:
+    client, fake, _gallery = studio
+    _nitro_ready(fake)
+    response = client.post("/api/generate", json={"prompt": "tower", "model": "nitro", "steps": 30})
+    assert response.status_code == 400
+    assert not fake.calls
+
+
+def test_qwen_still_rejects_one_step(studio) -> None:
+    client, fake, _gallery = studio
+    assert client.post("/api/generate", json={"prompt": "tower", "steps": 1}).status_code == 400
+    assert not fake.calls
+
+
+def test_nitro_unavailable_is_a_conflict(studio) -> None:
+    client, fake, _gallery = studio
+    response = client.post("/api/generate", json={"prompt": "tower", "model": "nitro", "steps": 1})
+    assert response.status_code == 409
+    assert "Install" in response.json()["detail"] or "ComfyUI-GGUF" in response.json()["detail"]
+    assert not fake.calls
+
+
+def test_nitro_only_generates_from_text(studio) -> None:
+    client, fake, gallery = studio
+    _nitro_ready(fake)
+    write_png(gallery.root / "source.png")
+    response = client.post("/api/generate", json={"prompt": "night", "model": "nitro", "operation": "edit", "sources": ["source.png"]})
+    assert response.status_code == 400
+    assert "NitroFusion 2" in response.json()["detail"]
+
+
+@pytest.mark.parametrize("payload", [
+    {"model": "moss", "steps": 2},
+    {"operation": "edit", "steps": 2, "sources": ["source.png"]},
+    {"operation": "extend", "steps": 3, "sources": ["source.png"]},
+])
+def test_only_nitro_takes_fewer_than_four_steps(studio, payload) -> None:
+    client, fake, gallery = studio
+    _moss_ready(fake)
+    write_png(gallery.root / "source.png")
+    response = client.post("/api/generate", json={"prompt": "tower", **payload})
+    assert response.status_code == 400
+    assert "4 through 50" in response.json()["detail"]
+    assert not fake.calls
+
+
+@pytest.mark.parametrize("operation", ["crop", "fit", "upscale"])
+def test_local_transforms_accept_a_nitro_assets_step_count(studio, operation) -> None:
+    # Transforms resend the source's stored steps; a NitroFusion image has 1.
+    client, _fake, gallery = studio
+    write_png(gallery.root / "source.png")
+    response = client.post("/api/generate", json={"operation": operation, "sources": ["source.png"],
+                                                  "steps": 1, "width": 768, "height": 512})
+    assert response.status_code == 200

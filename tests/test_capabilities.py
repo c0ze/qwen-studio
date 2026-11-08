@@ -65,3 +65,42 @@ def test_capabilities_report_whether_comfy_answered():
             raise OSError("down")
 
     assert capabilities(Offline())["online"] is False
+
+
+def nitro_nodes(unet=None, clip=None, vae=None, lora=None, types=("lumina2",)):
+    from qwen_studio import nitro
+    return {
+        "UnetLoaderGGUF": {"input": {"required": {"unet_name": [[nitro.MODEL] if unet is None else unet]}}},
+        "CLIPLoaderGGUF": {"input": {"required": {
+            "clip_name": [[nitro.ENCODER] if clip is None else clip],
+            "type": [list(types)],
+        }}},
+        "VAELoader": {"input": {"required": {"vae_name": [[nitro.VAE] if vae is None else vae]}}},
+        "LoraLoaderModelOnly": {"input": {"required": {"lora_name": [[nitro.LORA] if lora is None else lora]}}},
+    }
+
+
+def test_nitro_ready_when_files_and_gguf_node_exist():
+    cap = capabilities(InfoClient(nitro_nodes()))
+    assert (cap["nitro"], cap["nitro_reason"]) == (True, "Ready")
+
+
+def test_nitro_needs_gguf_text_encoder_support():
+    cap = capabilities(InfoClient(nitro_nodes(types=("stable_diffusion",))))
+    assert cap["nitro"] is False
+    assert "ComfyUI-GGUF" in cap["nitro_reason"]
+
+
+def test_nitro_reports_the_missing_lora():
+    from qwen_studio import nitro
+    cap = capabilities(InfoClient(nitro_nodes(lora=[])))
+    assert cap["nitro"] is False
+    assert nitro.LORA in cap["nitro_reason"] and "loras" in cap["nitro_reason"]
+
+
+def test_offline_comfy_disables_nitro():
+    class Offline:
+        def request_json(self, *args, **kwargs):
+            raise OSError("down")
+
+    assert capabilities(Offline())["nitro"] is False

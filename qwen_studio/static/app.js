@@ -22,10 +22,14 @@ let capability = null;
 let lastWorkflow = "generate";
 // Steps and negative prompt are kept per model: switching models stores the
 // current values and restores the other model's own (or its defaults).
-const MODEL_DEFAULTS = { qwen: { negative: DEFAULT_NEGATIVE, steps: "30" }, moss: { negative: "", steps: "25" } };
-const MODEL_LABELS = { qwen: "Qwen 2512", moss: "MOSS Image" };
+const MODEL_DEFAULTS = { qwen: { negative: DEFAULT_NEGATIVE, steps: "30" }, moss: { negative: "", steps: "25" }, nitro: { negative: "", steps: "1" } };
+const MODEL_LABELS = { qwen: "Qwen 2512", moss: "MOSS Image", nitro: "NitroFusion 2" };
+const STEP_RANGES = { qwen: [4, 50], moss: [4, 50], nitro: [1, 2] };
 let modelSettings = {};
-const modelOf = (choice) => choice === "moss" ? "moss" : "qwen";
+const modelOf = (choice) => ["moss", "nitro"].includes(choice) ? choice : "qwen";
+const stepsLabel = (n) => `${n} step${Number(n) === 1 ? "" : "s"}`;
+// Set the slider range before its value: a range input clamps to min/max.
+function setStepRange(model) { [$("steps").min, $("steps").max] = STEP_RANGES[model].map(String); }
 const currentModelSettings = () => ({ negative: $("negative").value, steps: $("steps").value });
 const draftKey = "qwen-studio-draft-v1";
 
@@ -61,7 +65,7 @@ function syncFrame() {
     radio.checked = radio.value === `${$("width").value}x${$("height").value}`;
   }
   $("steps-val").textContent = $("steps").value;
-  $("settings-summary").textContent = `${$("width").value}×${$("height").value} · ${$("steps").value} steps`;
+  $("settings-summary").textContent = `${$("width").value}×${$("height").value} · ${stepsLabel($("steps").value)}`;
   updatePromptPreview();
 }
 function saveDraft() {
@@ -75,6 +79,7 @@ function applySettings(data) {
     modelSettings = Object.fromEntries(Object.entries(data.model_settings).filter(([model, value]) =>
       model in MODEL_DEFAULTS && typeof value?.negative === "string" && /^\d+$/.test(String(value?.steps))));
   }
+  setStepRange(modelOf(choice));
   for (const [key, id] of Object.entries({ prompt: "prompt", negative_prompt: "negative", width: "width", height: "height", steps: "steps", seed: "seed" })) {
     if (data[key] != null) $(id).value = String(data[key]);
   }
@@ -223,7 +228,7 @@ function openLightbox(item) {
   $("lb-img").src = `${item.url}?v=${item.mtime}`; $("lb-img").alt = item.filename;
   $("lb-meta").textContent = [item.filename, item.width && item.height ? `${item.width}×${item.height}` : null,
     MODEL_LABELS[item.model] ?? null,
-    item.steps != null ? `${item.steps} steps` : null, item.seed != null ? `seed ${item.seed}` : null,
+    item.steps != null ? stepsLabel(item.steps) : null, item.seed != null ? `seed ${item.seed}` : null,
     new Date(item.created_at).toLocaleString()].filter(Boolean).join(" · ");
   $("lb-prompt").textContent = item.prompt || "(no prompt stored)";
   $("lb-open").href = item.url; $("lb-open").download = item.filename;
@@ -375,7 +380,7 @@ $('asset-move').addEventListener('click', async () => {
   finally { $('asset-move').disabled = false; }
 });
 function renderReferences() {
-  $('reference-panel').hidden = ['generate', 'moss'].includes($('operation').value);
+  $('reference-panel').hidden = ['generate', 'moss', 'nitro'].includes($('operation').value);
   $('references').replaceChildren(...references.map((item, index) => {
     const row = document.createElement('div'); row.className = 'reference';
     const image = document.createElement('img'); image.src = item.url; image.alt = `Picture ${index + 1}`;
@@ -403,7 +408,7 @@ function switchWorkflow() {
   if (from !== to) {
     modelSettings[from] = currentModelSettings();
     const next = modelSettings[to] || MODEL_DEFAULTS[to];
-    $('negative').value = next.negative; $('steps').value = String(next.steps);
+    setStepRange(to); $('negative').value = next.negative; $('steps').value = String(next.steps);
   }
   renderReferences(); renderCapability(); syncFrame();
 }
@@ -411,7 +416,8 @@ $('operation').addEventListener('change', () => { switchWorkflow(); saveDraft();
 function renderCapability() {
   if (!capability) return;
   const choice = $('operation').value;
-  const ready = { moss: '25 steps and an empty negative prompt are recommended' };
+  const ready = { moss: '25 steps and an empty negative prompt are recommended',
+    nitro: 'fast drafts in 1 step, 2 for fewer artifacts · the negative prompt is not used' };
   $('edit-capability').textContent = choice in ready
     ? (capability[choice] ? `${MODEL_LABELS[choice]} ready · ${ready[choice]}`
       : capability.online ? `${MODEL_LABELS[choice]}: ${capability[`${choice}_reason`]}` : `${MODEL_LABELS[choice]} · ComfyUI starts with the first job`)

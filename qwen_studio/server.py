@@ -22,19 +22,19 @@ from qwen_studio.gallery import Gallery
 from qwen_studio.jobs import JobRunner
 
 STATIC_DIR = Path(__file__).parent / "static"
-MODEL_LABELS = {"moss": "MOSS Image"}
+MODEL_LABELS = {"moss": "MOSS Image", "nitro": "NitroFusion 2"}
 
 
 class GenerateRequest(BaseModel):
     prompt: str = ""
     project: str = ""
     operation: Literal["generate", "edit", "extend", "crop", "fit", "upscale"] = "generate"
-    model: Literal["qwen", "moss"] = "qwen"
+    model: Literal["qwen", "moss", "nitro"] = "qwen"
     sources: list[str] = Field(default_factory=list, max_length=3)
     negative_prompt: str = DEFAULT_NEGATIVE
     width: int = 1024
     height: int = 1024
-    steps: int = Field(default=30, ge=4, le=50)
+    steps: int = Field(default=30, ge=1, le=50)
     seed: int = 0
 
 
@@ -176,10 +176,11 @@ def create_app(
     @app.post("/api/generate")
     async def generate(body: GenerateRequest) -> dict:
         gallery.project_dir(body.project)
+        # Before validate_params, whose step range depends on the model.
         if body.model != "qwen" and body.operation != "generate":
             raise ValueError(f"{MODEL_LABELS[body.model]} only creates images from text")
         if body.operation in {"generate", "edit", "extend"}:
-            prompt = validate_params(body.prompt, body.width, body.height, body.steps, body.seed)
+            prompt = validate_params(body.prompt, body.width, body.height, body.steps, body.seed, body.model)
         else:
             prompt = body.prompt.strip()
             if not (64 <= body.width <= 4096 and 64 <= body.height <= 4096):

@@ -11,10 +11,10 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from qwen_studio import moss
+from qwen_studio import moss, nitro
 
 # Text-to-image models other than Qwen 2512, each a module with workflow() and PREFIX.
-EXTRA_MODELS = {"moss": moss}
+EXTRA_MODELS = {"moss": moss, "nitro": nitro}
 
 COMFY_URL = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188").rstrip("/")
 COMFY_DIR = Path(os.environ.get("COMFYUI_DIR", str(Path.home() / "ComfyUI"))).expanduser().resolve()
@@ -41,15 +41,16 @@ MIN_STEPS = 4
 MAX_STEPS = 50
 
 
-def validate_params(prompt: str, width: int, height: int, steps: int, seed: int) -> str:
+def validate_params(prompt: str, width: int, height: int, steps: int, seed: int, model: str = "qwen") -> str:
     if not prompt.strip():
         raise ValueError("prompt cannot be empty")
     if not (MIN_SIZE <= width <= MAX_SIZE and width % SIZE_STEP == 0):
         raise ValueError("width must be a multiple of 64 from 512 through 1664")
     if not (MIN_SIZE <= height <= MAX_SIZE and height % SIZE_STEP == 0):
         raise ValueError("height must be a multiple of 64 from 512 through 1664")
-    if not MIN_STEPS <= steps <= MAX_STEPS:
-        raise ValueError("steps must be from 4 through 50")
+    low, high = (nitro.MIN_STEPS, nitro.MAX_STEPS) if model == "nitro" else (MIN_STEPS, MAX_STEPS)
+    if not low <= steps <= high:
+        raise ValueError(f"steps must be from {low} through {high}")
     if seed < 0 or seed >= 2**63:
         raise ValueError("seed must be 0 or a positive 63-bit integer")
     return prompt.strip()

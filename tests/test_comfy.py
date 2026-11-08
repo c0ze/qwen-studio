@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import urllib.error
 
 import pytest
@@ -193,3 +194,64 @@ def test_moss_generation_saves_under_its_own_prefix(monkeypatch, tmp_path):
     client.generate("tower", "", 1024, 1024, 25, 7, model="moss")
     assert submissions[0]["1"]["class_type"] == "UNETLoader"
     assert submissions[0]["10"]["inputs"]["filename_prefix"].startswith("LMStudio/MOSS-Image-")
+
+
+def test_nitro_one_step_follows_published_graph():
+    from qwen_studio import nitro
+
+    graph = ComfyClient().workflow("tower", "ignored", 1024, 1536, 1, 7, model="nitro")
+    assert graph["1"] == {"class_type": "UnetLoaderGGUF", "inputs": {"unet_name": nitro.MODEL}}
+    assert graph["2"]["inputs"]["shift"] == 3.0
+    assert graph["3"]["inputs"] == {"clip_name": nitro.ENCODER, "type": "lumina2"}
+    # CFG 1: the negative is the zeroed positive, never the user's text.
+    assert graph["6"] == {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["5", 0]}}
+    assert "ignored" not in json.dumps(graph)
+    assert (graph["7"]["inputs"]["width"], graph["7"]["inputs"]["height"]) == (1024, 1536)
+    sampler = graph["8"]["inputs"]
+    assert (sampler["steps"], sampler["cfg"], sampler["sampler_name"], sampler["seed"]) == (1, 1.0, "euler", 7)
+    assert graph["9"]["inputs"]["samples"] == ["8", 0]
+    assert graph["10"]["class_type"] == "SaveImage"
+    assert not any(node["class_type"] == "LoraLoaderModelOnly" for node in graph.values())
+
+
+def test_nitro_two_steps_use_the_dedistill_lora_on_the_first_step():
+    from qwen_studio import nitro
+
+    graph = ComfyClient().workflow("tower", "", 1024, 1024, 2, 7, model="nitro")
+    assert graph["11"]["inputs"] == {"model": ["1", 0], "lora_name": nitro.LORA, "strength_model": 0.5}
+    assert graph["12"]["inputs"]["shift"] == graph["2"]["inputs"]["shift"] == 6.0
+    first, second = graph["8"]["inputs"], graph["13"]["inputs"]
+    assert graph["8"]["class_type"] == graph["13"]["class_type"] == "KSamplerAdvanced"
+    assert (first["model"], first["start_at_step"], first["end_at_step"]) == (["12", 0], 0, 1)
+    assert (first["add_noise"], first["return_with_leftover_noise"]) == ("enable", "enable")
+    assert (second["model"], second["latent_image"], second["start_at_step"], second["end_at_step"]) == (["2", 0], ["8", 0], 1, 2)
+    assert second["add_noise"] == "disable"
+    assert first["noise_seed"] == second["noise_seed"] == 7
+    for sampler in (first, second):
+        assert (sampler["steps"], sampler["cfg"], sampler["sampler_name"], sampler["scheduler"]) == (2, 1.0, "euler", "simple")
+    assert second["return_with_leftover_noise"] == "disable"
+    assert graph["9"]["inputs"]["samples"] == ["13", 0]
+
+
+@pytest.mark.parametrize("steps", [0, 3, 30])
+def test_nitro_refuses_other_step_counts(steps):
+    with pytest.raises(ValueError, match="1 or 2 steps"):
+        ComfyClient().workflow("tower", "", 1024, 1024, steps, 7, model="nitro")
+
+
+def test_step_limits_depend_on_the_model():
+    assert validate_params("tower", 1024, 1024, 1, 7, "nitro") == "tower"
+    with pytest.raises(ValueError, match="from 1 through 2"):
+        validate_params("tower", 1024, 1024, 4, 7, "nitro")
+    with pytest.raises(ValueError, match="from 4 through 50"):
+        validate_params("tower", 1024, 1024, 1, 7)
+
+
+def test_nitro_generation_saves_under_its_own_prefix(monkeypatch, tmp_path):
+    client = ComfyClient()
+    monkeypatch.setattr(client, "ensure", lambda: None)
+    submissions = []
+    monkeypatch.setattr(client, "request_json", lambda *a, **kw: submissions.append(kw["payload"]["prompt"]) or {"prompt_id": "x"})
+    monkeypatch.setattr(client, "_wait_for_image", lambda *args: tmp_path / "image.png")
+    client.generate("tower", "", 1024, 1024, 1, 7, model="nitro")
+    assert submissions[0]["10"]["inputs"]["filename_prefix"].startswith("LMStudio/NitroFusion2-")

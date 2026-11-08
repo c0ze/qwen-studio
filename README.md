@@ -1,6 +1,6 @@
 # Qwen Studio
 
-A local image workspace for **Qwen-Image-2512**, **Qwen-Image-Edit-2511** and, optionally, **MOSS-Image**, powered by ComfyUI. Includes an Omarchy custom app, desktop launcher, user service, and optional bar plugin.
+A local image workspace for **Qwen-Image-2512**, **Qwen-Image-Edit-2511** and, optionally, **MOSS-Image** and **NitroFusion 2**, powered by ComfyUI. Includes an Omarchy custom app, desktop launcher, user service, and optional bar plugin.
 
 - Create images with 12 editable style templates and exact, reusable seeds.
 - Organize assets into persistent project folders; import, move, rename folders, search, and download.
@@ -66,6 +66,25 @@ uv run python -m qwen_studio.models moss
 
 Studio uses the upstream reference graph: 25 steps, CFG 2.5, `er_sde`, skip-layer guidance on layer 22 for the first half of sampling, and an empty negative prompt. Steps and the negative prompt are remembered per model, so switching between Qwen and MOSS restores each model's own values (or its defaults). On an RX 9060 XT (16 GB, ROCm 7.0, `--lowvram`) a 1024² image samples at about 1.4 s per step.
 
+### NitroFusion 2 (optional)
+
+[NitroFusion 2](https://huggingface.co/ChenDY/NitroFusion2) (Apache-2.0) is a 1–2 step distillation of Z-Image-Turbo, for fast drafts: try prompts and compositions here, then render the keepers with Qwen or MOSS. Choose **Fast draft · NitroFusion 2** in the Workflow menu. It does not do reference edits or outpainting, and it runs at CFG 1, so it ignores the negative prompt.
+
+It runs through ComfyUI-GGUF (the same custom node as the Qwen GGUFs). To download the **12.2 GB** of files with SHA-256 verification:
+
+```bash
+uv run python -m qwen_studio.models nitro
+```
+
+| Location inside ComfyUI | File |
+| --- | --- |
+| `models/diffusion_models/` | `nf2-Q8_0.gguf` |
+| `models/text_encoders/` | `Qwen3-4B-Q8_0.gguf` |
+| `models/loras/` | `nf2-dedistill-lora.safetensors` |
+| `models/vae/` | `ae.safetensors` (the FLUX.1 autoencoder) |
+
+Studio follows the published GGUF workflows: one step uses euler at shift 3; two steps use shift 6, with the de-distillation LoRA at 0.5 on the first step only, which removes some one-step artifacts. On an RX 9060 XT a 1024² image takes about 4 s at one step and 8 s at two, once the models are loaded (the first image after a load takes about 80 s). Smaller tiers, from `nf2-Q2_K_4XS.gguf` (2.0 GB) up, can be installed by hand and selected with `NITRO_MODEL`.
+
 ## Omarchy installation
 
 ```bash
@@ -121,6 +140,7 @@ Anime, Cartoon, Realistic, Medieval, Ink pen, Stylized, Watercolor, Oil painting
 | `QWEN_MODEL` | `qwen-image-2512-Q4_K_S.gguf` |
 | `QWEN_EDIT_MODEL` | `qwen-image-edit-2511-Q4_K_S.gguf` |
 | `MOSS_MODEL` | `moss_image_sft_int8_convrot.safetensors` |
+| `NITRO_MODEL` | `nf2-Q8_0.gguf` |
 | `QWEN_STUDIO_HOST` | `127.0.0.1` |
 | `QWEN_STUDIO_PORT` | `8790` |
 

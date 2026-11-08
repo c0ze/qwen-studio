@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
-from qwen_studio import moss
+from qwen_studio import moss, nitro
 from qwen_studio.comfy import COMFY_DIR, EDIT_MODEL, OUTPUT_DIR
 from qwen_studio.imaging import load_image, outpaint_input
 
@@ -32,19 +32,36 @@ def _moss_status(nodes: dict) -> tuple[bool, str]:
     return True, "Ready"
 
 
+def _nitro_status(nodes: dict) -> tuple[bool, str]:
+    if "lumina2" not in _options(nodes, "CLIPLoaderGGUF", "type"):
+        return False, "Install ComfyUI-GGUF with Z-Image (lumina2) support."
+    for node, field, name, folder in [
+        ("UnetLoaderGGUF", "unet_name", nitro.MODEL, "diffusion_models"),
+        ("CLIPLoaderGGUF", "clip_name", nitro.ENCODER, "text_encoders"),
+        ("VAELoader", "vae_name", nitro.VAE, "vae"),
+        ("LoraLoaderModelOnly", "lora_name", nitro.LORA, "loras"),
+    ]:
+        if name not in _options(nodes, node, field):
+            return False, f"Install {name} in ComfyUI/models/{folder}."
+    return True, "Ready"
+
+
 def capabilities(client) -> dict:
     try:
         nodes = client.request_json("/object_info", timeout=5)
         models = _options(nodes, "UnetLoaderGGUF", "unet_name")
         available = EDIT_MODEL in models and "TextEncodeQwenImageEditPlus" in nodes
         moss_ready, moss_reason = _moss_status(nodes)
+        nitro_ready, nitro_reason = _nitro_status(nodes)
         return {"online": True, "edit": available, "reference_limit": 3, "edit_model": EDIT_MODEL,
                 "reason": "Ready" if available else f"Install {EDIT_MODEL} in ComfyUI/models/diffusion_models and ComfyUI-GGUF.",
                 "moss": moss_ready, "moss_model": moss.MODEL, "moss_reason": moss_reason,
+                "nitro": nitro_ready, "nitro_model": nitro.MODEL, "nitro_reason": nitro_reason,
                 "upscale": "Lanczos (resampling, not AI detail generation)"}
     except (OSError, ValueError, AttributeError):
         return {"online": False, "edit": False, "reference_limit": 3, "edit_model": EDIT_MODEL, "reason": "ComfyUI is unavailable",
-                "moss": False, "moss_model": moss.MODEL, "moss_reason": "ComfyUI is unavailable", "upscale": "Lanczos"}
+                "moss": False, "moss_model": moss.MODEL, "moss_reason": "ComfyUI is unavailable",
+                "nitro": False, "nitro_model": nitro.MODEL, "nitro_reason": "ComfyUI is unavailable", "upscale": "Lanczos"}
 
 
 def workflow(client, prompt, negative, width, height, steps, seed, inputs, operation):

@@ -2,12 +2,13 @@
 
     python -m qwen_studio.models          # Qwen Edit 2511 GGUF (12.4 GB)
     python -m qwen_studio.models moss     # MOSS-Image SFT int8 + encoder + VAE (15.4 GB)
+    python -m qwen_studio.models nitro    # NitroFusion 2 Q8 GGUF + encoder + LoRA + VAE (12.2 GB)
 """
 import hashlib
 import sys
 import urllib.request
 
-from qwen_studio import moss
+from qwen_studio import moss, nitro
 from qwen_studio.comfy import COMFY_DIR
 
 NAME = "qwen-image-edit-2511-Q4_K_S.gguf"
@@ -23,9 +24,24 @@ MOSS_FILES = [
     ("vae", moss.VAE, "d8d52ba036475f5fb07c8b435e176d3d97ebfa82f0d1a1c317f9cc1e25bd013b"),
 ]
 
+NITRO_URL = "https://huggingface.co/ChenDY/NitroFusion2/resolve/main"
+# The Q8 GGUF is the default nitro.MODEL; a different NITRO_MODEL tier is installed by hand.
+NITRO_FILES = [
+    ("diffusion_models", "nf2-Q8_0.gguf", f"{NITRO_URL}/nf2-Q8_0.gguf",
+     "53ff39a3663b5397ff3e78b4dda945b7b2166073163cc9811de6ee6d69164552"),
+    ("text_encoders", nitro.ENCODER, f"https://huggingface.co/unsloth/Qwen3-4B-GGUF/resolve/main/{nitro.ENCODER}",
+     "eed555233267a33c7e8ee31682762cc7751b3f6d224039086e0e846f05fffa5d"),
+    ("loras", nitro.LORA, f"{NITRO_URL}/{nitro.LORA}",
+     "22658dff2284c343cbd2a6f02abb8373472611c3d5d657bf30f20db992d35693"),
+    # Z-Image decodes with the FLUX.1 autoencoder.
+    ("vae", nitro.VAE, f"https://huggingface.co/Comfy-Org/Z-Image-Turbo/resolve/main/split_files/vae/{nitro.VAE}",
+     "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38"),
+]
+
 BUNDLES = {
     "edit": [("diffusion_models", NAME, URL, SHA256)],
     "moss": [(folder, name, f"{MOSS_URL}/{folder}/{name}", sha) for folder, name, sha in MOSS_FILES],
+    "nitro": NITRO_FILES,
 }
 
 
