@@ -22,15 +22,23 @@ from qwen_studio.gallery import Gallery
 from qwen_studio.jobs import JobRunner
 
 STATIC_DIR = Path(__file__).parent / "static"
-MODEL_LABELS = {"moss": "MOSS Image", "nitro": "NitroFusion 2"}
+MODEL_LABELS = {"moss": "MOSS Image", "nitro": "NitroFusion 2", "zimage": "Z-Image Turbo"}
+
+
+class LoraChoice(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    strength: float = Field(default=1.0, ge=-2.0, le=2.0)
 
 
 class GenerateRequest(BaseModel):
     prompt: str = ""
     project: str = ""
-    operation: Literal["generate", "edit", "extend", "crop", "fit", "upscale"] = "generate"
-    model: Literal["qwen", "moss", "nitro"] = "qwen"
+    operation: Literal["generate", "edit", "extend", "restyle", "crop", "fit", "upscale"] = "generate"
+    model: Literal["qwen", "moss", "nitro", "zimage"] = "qwen"
     sources: list[str] = Field(default_factory=list, max_length=3)
+    loras: list[LoraChoice] = Field(default_factory=list, max_length=3)
+    # Restyle only: how far to move away from the source (0.05 keeps it, 1 ignores it).
+    denoise: float = Field(default=0.6, ge=0.05, le=1.0)
     negative_prompt: str = DEFAULT_NEGATIVE
     width: int = 1024
     height: int = 1024
@@ -177,9 +185,18 @@ def create_app(
     async def generate(body: GenerateRequest) -> dict:
         gallery.project_dir(body.project)
         # Before validate_params, whose step range depends on the model.
-        if body.model != "qwen" and body.operation != "generate":
+        if body.operation == "restyle" and body.model != "zimage":
+            raise ValueError("restyle uses Z-Image Turbo; set model to zimage")
+        if body.model == "zimage" and body.operation not in {"generate", "restyle"}:
+            raise ValueError("Z-Image Turbo creates from text or restyles one source image")
+        if body.model not in {"qwen", "zimage"} and body.operation != "generate":
             raise ValueError(f"{MODEL_LABELS[body.model]} only creates images from text")
-        if body.operation in {"generate", "edit", "extend"}:
+        choices = [(item.name, item.strength) for item in body.loras]
+        if choices and body.model != "zimage":
+            raise ValueError("LoRAs work with Z-Image Turbo only")
+        if len({name for name, _ in choices}) != len(choices):
+            raise ValueError("each LoRA can be used once")
+        if body.operation in {"generate", "edit", "extend", "restyle"}:
             prompt = validate_params(body.prompt, body.width, body.height, body.steps, body.seed, body.model)
         else:
             prompt = body.prompt.strip()
@@ -191,7 +208,7 @@ def create_app(
             raise ValueError("choose reference/edit mode to use source images")
         if body.operation != "generate" and not body.sources:
             raise ValueError("select a source image")
-        if body.operation in {"extend", "crop", "fit", "upscale"} and len(body.sources) != 1:
+        if body.operation in {"extend", "restyle", "crop", "fit", "upscale"} and len(body.sources) != 1:
             raise ValueError("this operation takes one source image")
         for source in body.sources:
             gallery.resolve(source)
@@ -203,6 +220,9 @@ def create_app(
                 raise HTTPException(409, cap[f"{body.model}_reason"])
             if body.operation in {"edit", "extend"} and not cap["edit"]:
                 raise HTTPException(409, cap["reason"])
+            if choices:
+                from qwen_studio import loras
+                loras.check(choices, body.model, cap["loras"] if cap["online"] else None)
         if body.operation == "extend":
             from qwen_studio.imaging import load_image
             source = await asyncio.to_thread(load_image, gallery.resolve(body.sources[0]))
@@ -216,6 +236,7 @@ def create_app(
             body.steps,
             body.seed,
             project=body.project, operation=body.operation, sources=body.sources, model=body.model,
+            loras=choices, denoise=body.denoise if body.operation == "restyle" else None,
         )
         return job.as_dict()
 

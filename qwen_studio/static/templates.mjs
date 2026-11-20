@@ -35,6 +35,9 @@ export const STYLE_TEMPLATES = [
   { id: 'clay', name: 'Clay miniature', mark: '●', color: '#dca9a0', description: 'Handmade shapes and a miniature-set feel.',
     prompt: 'A handmade clay miniature photographed on a carefully built miniature set, rounded sculpted forms, subtle fingerprints and tool marks, tactile matte surfaces, soft studio lighting, and charming stop-motion craftsmanship.',
     negative: 'glossy plastic, photorealistic flesh, razor-sharp mechanical edges, flat vector art' },
+  { id: 'asset3d', name: '3D asset concept', mark: '⬡', color: '#9fb7c9', description: 'One whole object on a plain background, ready for image-to-3D.',
+    prompt: 'A single game asset concept: one whole object, centered and fully in frame, three-quarter view from slightly above, even soft studio lighting, plain light grey background, no cast shadow on the ground, clean readable silhouette, clear material colors.',
+    negative: 'multiple objects, cropped object, busy background, scenery, text, watermark, dramatic lighting, heavy shadows, motion blur' },
 ];
 
 export function composePrompt(subject, style) {

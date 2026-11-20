@@ -22,11 +22,15 @@ let capability = null;
 let lastWorkflow = "generate";
 // Steps and negative prompt are kept per model: switching models stores the
 // current values and restores the other model's own (or its defaults).
-const MODEL_DEFAULTS = { qwen: { negative: DEFAULT_NEGATIVE, steps: "30" }, moss: { negative: "", steps: "25" }, nitro: { negative: "", steps: "1" } };
-const MODEL_LABELS = { qwen: "Qwen 2512", moss: "MOSS Image", nitro: "NitroFusion 2" };
-const STEP_RANGES = { qwen: [4, 50], moss: [4, 50], nitro: [1, 2] };
+const MODEL_DEFAULTS = { qwen: { negative: DEFAULT_NEGATIVE, steps: "30" }, moss: { negative: "", steps: "25" }, nitro: { negative: "", steps: "1" }, zimage: { negative: "", steps: "8" } };
+const MODEL_LABELS = { qwen: "Qwen 2512", moss: "MOSS Image", nitro: "NitroFusion 2", zimage: "Z-Image Turbo" };
+const STEP_RANGES = { qwen: [4, 50], moss: [4, 50], nitro: [1, 2], zimage: [4, 20] };
 let modelSettings = {};
-const modelOf = (choice) => ["moss", "nitro"].includes(choice) ? choice : "qwen";
+let selectedLoras = [];  // [{name, strength}], Z-Image only
+const modelOf = (choice) => choice === "restyle" ? "zimage" : ["moss", "nitro", "zimage"].includes(choice) ? choice : "qwen";
+// The API operation for a workflow choice: text-only models generate; restyle and edits name themselves.
+const operationOf = (choice) => ["edit", "extend", "restyle"].includes(choice) ? choice : "generate";
+const usesReferences = (choice) => ["edit", "extend", "restyle"].includes(choice);
 const stepsLabel = (n) => `${n} step${Number(n) === 1 ? "" : "s"}`;
 // Set the slider range before its value: a range input clamps to min/max.
 function setStepRange(model) { [$("steps").min, $("steps").max] = STEP_RANGES[model].map(String); }
@@ -57,7 +61,7 @@ function settings() {
     negative_prompt: $("negative").value,
     width: Number($("width").value), height: Number($("height").value),
     steps: Number($("steps").value), seed: $("seed").value.trim() || "0",
-    model_settings: modelSettings,
+    model_settings: modelSettings, loras: selectedLoras, denoise: Number($("denoise").value),
   };
 }
 function syncFrame() {
@@ -66,13 +70,14 @@ function syncFrame() {
   }
   $("steps-val").textContent = $("steps").value;
   $("settings-summary").textContent = `${$("width").value}×${$("height").value} · ${stepsLabel($("steps").value)}`;
+  $("denoise-val").textContent = Number($("denoise").value).toFixed(2);
   updatePromptPreview();
 }
 function saveDraft() {
   try { localStorage.setItem(draftKey, JSON.stringify({ ...settings(), references })); } catch { /* Storage is optional. */ }
 }
 function applySettings(data) {
-  const choice = data.operation === "extend" ? "extend" : data.operation === "edit" ? "edit"
+  const choice = ["extend", "edit", "restyle"].includes(data.operation) ? data.operation
     : modelOf(data.operation) !== "qwen" ? data.operation : modelOf(data.model) !== "qwen" ? data.model : "generate";
   if (modelOf(choice) !== modelOf(lastWorkflow)) modelSettings[modelOf(lastWorkflow)] = currentModelSettings();
   if (data.model_settings && typeof data.model_settings === "object") {
@@ -87,7 +92,12 @@ function applySettings(data) {
   lastWorkflow = choice;
   if ([...$("generation-project").options].some(option => option.value === data.project)) $("generation-project").value = data.project;
   references = (data.references || []).filter(item => typeof item?.filename === "string").slice(0, 3);
-  renderReferences(); renderCapability();
+  if (Array.isArray(data.loras)) {
+    selectedLoras = data.loras.filter(item => typeof item?.name === "string" && Number.isFinite(Number(item.strength)))
+      .slice(0, 3).map(item => ({ name: item.name, strength: Number(item.strength) }));
+  }
+  if (data.denoise != null && Number.isFinite(Number(data.denoise))) $("denoise").value = String(data.denoise);
+  renderReferences(); renderCapability(); renderLoras();
   setStyle(data.style_id || "", data.style_prompt, data.style_negative);
   syncFrame();
 }
@@ -159,16 +169,20 @@ form.addEventListener("submit", async (event) => {
     $("prompt").focus();
     return;
   }
-  const choice = $("operation").value, operation = modelOf(choice) !== "qwen" ? "generate" : choice;
+  const choice = $("operation").value, operation = operationOf(choice);
   const body = { ...generationSettings(settings()), project: $("generation-project").value, operation, model: modelOf(choice),
-    sources: operation === "generate" ? [] : references.map(item => item.filename) };
+    sources: operation === "generate" ? [] : references.map(item => item.filename),
+    loras: modelOf(choice) === "zimage" ? selectedLoras : [] };
+  if (operation === "restyle") body.denoise = Number($("denoise").value);
   if (body.model !== "qwen" && capability?.online && !capability[body.model]) {
     setJob(`${MODEL_LABELS[body.model]}: ${capability[`${body.model}_reason`]}`, true); return;
   }
-  if (body.operation !== "generate" && (!editAvailable || !body.sources.length)) {
+  if (["edit", "extend"].includes(body.operation) && (!editAvailable || !body.sources.length)) {
     setJob(!editAvailable ? $("edit-capability").textContent : "Select a reference image first.", true); return;
   }
-  if (body.operation === "extend" && body.sources.length !== 1) { setJob("Extend uses exactly one source image.", true); return; }
+  if (["extend", "restyle"].includes(body.operation) && body.sources.length !== 1) {
+    setJob(`${body.operation === "extend" ? "Extend" : "Restyle"} uses exactly one source image.`, true); return;
+  }
   if (!/^\d+$/.test(body.seed) || BigInt(body.seed) >= 2n ** 63n) {
     setJob("Seed must be a whole number from 0 to 9223372036854775807.", true); return;
   }
@@ -228,6 +242,8 @@ function openLightbox(item) {
   $("lb-img").src = `${item.url}?v=${item.mtime}`; $("lb-img").alt = item.filename;
   $("lb-meta").textContent = [item.filename, item.width && item.height ? `${item.width}×${item.height}` : null,
     MODEL_LABELS[item.model] ?? null,
+    ...(item.loras || []).map(lora => `LoRA ${lora.name.replace(/\.safetensors$/, "")} @ ${lora.strength}`),
+    item.denoise != null ? `restyle ${item.denoise}` : null,
     item.steps != null ? stepsLabel(item.steps) : null, item.seed != null ? `seed ${item.seed}` : null,
     new Date(item.created_at).toLocaleString()].filter(Boolean).join(" · ");
   $("lb-prompt").textContent = item.prompt || "(no prompt stored)";
@@ -283,7 +299,7 @@ async function refreshJobs() {
   const rows = [...active, ...recent].map((job) => {
     const row = document.createElement("div"); row.className = `queue-item ${job.status}`;
     const label = document.createElement("p");
-    const workflow = modelOf(job.model) !== "qwen" ? `generate · ${MODEL_LABELS[job.model]}` : job.operation || "generate";
+    const workflow = modelOf(job.model) !== "qwen" ? `${job.operation || "generate"} · ${MODEL_LABELS[job.model]}` : job.operation || "generate";
     label.textContent = `${job.status} · ${workflow} · ${job.prompt || "Image copy"}`; row.append(label);
     const detail = document.createElement("small"); detail.textContent = job.error || `${job.width}×${job.height} · seed ${job.seed}`; row.append(detail);
     if (job.status === "queued") {
@@ -380,7 +396,8 @@ $('asset-move').addEventListener('click', async () => {
   finally { $('asset-move').disabled = false; }
 });
 function renderReferences() {
-  $('reference-panel').hidden = ['generate', 'moss', 'nitro'].includes($('operation').value);
+  $('reference-panel').hidden = !usesReferences($('operation').value);
+  $('denoise-field').hidden = $('operation').value !== 'restyle';
   $('references').replaceChildren(...references.map((item, index) => {
     const row = document.createElement('div'); row.className = 'reference';
     const image = document.createElement('img'); image.src = item.url; image.alt = `Picture ${index + 1}`;
@@ -391,12 +408,13 @@ function renderReferences() {
   }));
 }
 function useReference(item, extend = false) {
-  if (extend) references = [item];
+  const restyle = $('operation').value === 'restyle';
+  if (extend || restyle) references = [item];
   else if (!references.some(ref => ref.filename === item.filename)) {
     if (references.length >= 3) { setJob('Up to three references. Remove one before adding another.', true); return; }
     references.push(item);
   }
-  $('operation').value = extend ? 'extend' : 'edit';
+  $('operation').value = extend ? 'extend' : restyle ? 'restyle' : 'edit';
   $('generation-project').value = item.project || '';
   switchWorkflow(); saveDraft();
   document.querySelector('.console').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -410,17 +428,20 @@ function switchWorkflow() {
     const next = modelSettings[to] || MODEL_DEFAULTS[to];
     setStepRange(to); $('negative').value = next.negative; $('steps').value = String(next.steps);
   }
-  renderReferences(); renderCapability(); syncFrame();
+  renderReferences(); renderCapability(); renderLoras(); syncFrame();
 }
 $('operation').addEventListener('change', () => { switchWorkflow(); saveDraft(); });
 function renderCapability() {
   if (!capability) return;
   const choice = $('operation').value;
   const ready = { moss: '25 steps and an empty negative prompt are recommended',
-    nitro: 'fast drafts in 1 step, 2 for fewer artifacts · the negative prompt is not used' };
+    nitro: 'fast drafts in 1 step, 2 for fewer artifacts · the negative prompt is not used',
+    zimage: '8 steps · LoRAs below · the negative prompt is not used',
+    restyle: 'one reference · LoRAs below · the negative prompt is not used' };
+  const model = modelOf(choice);
   $('edit-capability').textContent = choice in ready
-    ? (capability[choice] ? `${MODEL_LABELS[choice]} ready · ${ready[choice]}`
-      : capability.online ? `${MODEL_LABELS[choice]}: ${capability[`${choice}_reason`]}` : `${MODEL_LABELS[choice]} · ComfyUI starts with the first job`)
+    ? (capability[model] ? `${MODEL_LABELS[model]} ready · ${ready[choice]}`
+      : capability.online ? `${MODEL_LABELS[model]}: ${capability[`${model}_reason`]}` : `${MODEL_LABELS[model]} · ComfyUI starts with the first job`)
     : capability.edit ? 'Qwen Edit ready · up to 3 reference images' : `Reference model: ${capability.reason}`;
 }
 $('lb-reference').addEventListener('click', () => {
@@ -446,7 +467,7 @@ $('reference-upload').addEventListener('change', () => upload($('reference-uploa
 async function refreshCapabilities() {
   try {
     capability = await getJson('/api/capabilities'); editAvailable = capability.edit;
-    renderCapability();
+    renderCapability(); renderLoras();
   } catch { capability = null; editAvailable = false; $('edit-capability').textContent = 'Models unavailable. Local crop, fit, and upscale still work.'; }
   setTimeout(refreshCapabilities, 30000);
 }
@@ -475,3 +496,46 @@ $('asset-transform').addEventListener('click', async () => {
   } catch (err) { $('lb-status').textContent = err.message; }
   finally { $('asset-transform').disabled = false; }
 });
+
+function renderLoras() {
+  const show = modelOf($('operation').value) === 'zimage';
+  $('lora-panel').hidden = !show;
+  if (!show) return;
+  const offered = (capability?.loras || []).filter(item => (item.models || []).includes('zimage'));
+  const limit = capability?.lora_limit || 3;
+  // Keep choices whose file is gone out of the request, but don't drop them while ComfyUI is offline.
+  if (capability?.online) selectedLoras = selectedLoras.filter(sel => offered.some(item => item.name === sel.name));
+  $('lora-empty').hidden = offered.length > 0;
+  $('lora-count').textContent = offered.length ? `${selectedLoras.length} / ${limit} selected` : '';
+  $('loras').replaceChildren(...offered.map(item => {
+    const chosen = selectedLoras.find(sel => sel.name === item.name);
+    const row = document.createElement('div'); row.className = 'lora';
+    const box = document.createElement('input'); box.type = 'checkbox'; box.checked = Boolean(chosen);
+    box.id = `lora-${item.name}`; box.disabled = !chosen && selectedLoras.length >= limit;
+    const label = document.createElement('label'); label.htmlFor = box.id; label.textContent = item.label; label.title = item.name;
+    const strength = document.createElement('input'); strength.type = 'number'; strength.min = '-2'; strength.max = '2'; strength.step = '0.05';
+    strength.value = String(chosen?.strength ?? 1); strength.disabled = !chosen; strength.setAttribute('aria-label', `${item.label} strength`);
+    box.addEventListener('change', () => {
+      selectedLoras = box.checked ? [...selectedLoras, { name: item.name, strength: Number(strength.value) || 1 }]
+        : selectedLoras.filter(sel => sel.name !== item.name);
+      renderLoras(); saveDraft();
+    });
+    strength.addEventListener('change', () => {
+      const value = Math.max(-2, Math.min(2, Number(strength.value) || 0));
+      selectedLoras = selectedLoras.map(sel => sel.name === item.name ? { ...sel, strength: value } : sel); saveDraft();
+    });
+    row.append(box, label, strength);
+    if (item.triggers?.length) {
+      const triggers = document.createElement('span'); triggers.className = 'triggers';
+      triggers.textContent = `trigger: ${item.triggers.join(', ')}`;
+      const add = document.createElement('button'); add.type = 'button'; add.textContent = 'Add to prompt';
+      add.addEventListener('click', () => {
+        const missing = item.triggers.filter(word => !$('prompt').value.includes(word));
+        if (missing.length) $('prompt').value = `${missing.join(', ')}, ${$('prompt').value}`.replace(/, $/, '');
+        syncFrame(); saveDraft(); $('prompt').focus();
+      });
+      triggers.append(add); row.append(triggers);
+    }
+    return row;
+  }));
+}

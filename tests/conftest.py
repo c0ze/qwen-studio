@@ -73,7 +73,7 @@ class FakeComfy:
         self.released += 1
         return True
 
-    def generate(self, prompt, negative_prompt, width, height, steps, seed, model="qwen"):
+    def generate(self, prompt, negative_prompt, width, height, steps, seed, model="qwen", loras=None):
         if self.fail:
             raise RuntimeError("comfy exploded")
         self.n += 1
@@ -88,6 +88,7 @@ class FakeComfy:
                 "steps": steps,
                 "seed": seed,
                 "model": model,
+                "loras": list(loras or []),
             }
         )
         return path

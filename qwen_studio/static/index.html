@@ -28,13 +28,23 @@
       <div class="console-heading"><span class="eyebrow">Create a frame</span><span class="local-badge">LOCAL WORKSPACE</span></div>
       <form id="gen-form">
         <label class="field"><span>Save to project</span><select id="generation-project" aria-label="Save to project"><option value="">Unfiled</option></select></label>
-        <label class="field"><span>Workflow</span><select id="operation"><option value="generate">Create from text · Qwen 2512</option><option value="moss">Create from text · MOSS Image</option><option value="nitro">Fast draft · NitroFusion 2</option><option value="edit">Reference / edit · Qwen Edit 2511</option><option value="extend">Extend canvas · Qwen Edit 2511</option></select></label>
+        <label class="field"><span>Workflow</span><select id="operation"><option value="generate">Create from text · Qwen 2512</option><option value="moss">Create from text · MOSS Image</option><option value="nitro">Fast draft · NitroFusion 2</option><option value="zimage">Create from text · Z-Image Turbo + LoRAs</option><option value="restyle">Restyle a reference · Z-Image Turbo + LoRAs</option><option value="edit">Reference / edit · Qwen Edit 2511</option><option value="extend">Extend canvas · Qwen Edit 2511</option></select></label>
         <p id="edit-capability" class="hint" role="status">Checking reference model…</p>
         <div id="reference-panel" hidden>
           <p class="hint">Use “Reference” on an archive image or import a file. Picture 1 is the main image; pictures 2–3 are extra references. Describe what to preserve and what to change.</p>
           <div id="references" class="references"></div>
           <label class="upload-control">Import reference<input id="reference-upload" type="file" accept="image/png,image/jpeg,image/webp"></label>
-          <p class="hint">Character resemblance is guided by the image; identity is not guaranteed. Extend keeps the original pixels and generates the surrounding area.</p>
+          <p class="hint">Character resemblance is guided by the image; identity is not guaranteed. Extend keeps the original pixels and generates the surrounding area. Restyle redraws Picture 1 in the prompt's and LoRAs' look and keeps its composition.</p>
+          <label class="field" id="denoise-field" hidden>
+            <span>Restyle strength <em id="denoise-val">0.60</em></span>
+            <input type="range" id="denoise" min="0.05" max="1" step="0.05" value="0.6" aria-describedby="denoise-hint">
+            <small id="denoise-hint" class="hint">Low keeps the reference's shapes and colors; high follows the prompt and LoRAs more.</small>
+          </label>
+        </div>
+        <div id="lora-panel" hidden>
+          <div class="section-label"><span>LoRAs</span><span id="lora-count" class="hint"></span></div>
+          <p id="lora-empty" class="hint" hidden>No Z-Image LoRAs in ComfyUI/models/loras.</p>
+          <div id="loras" class="loras"></div>
         </div>
         <label class="field">
           <span>01 / Your subject</span>

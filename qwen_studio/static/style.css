@@ -281,7 +281,12 @@ dialog { border-radius: 12px; box-shadow: 0 30px 100px #0009; }
 .project-form input { flex: 1; min-width: 140px; padding: 0.6rem; color: var(--ink); background: #07090d; border: 1px solid var(--line); }
 .upload-control { display: inline-flex; align-items: center; gap: 0.4rem; }
 .upload-control input { max-width: 190px; font-size: 0.65rem; }
-#reference-panel { border: 1px solid var(--line); border-radius: 6px; padding: 0.65rem; margin-bottom: 1rem; }
+#reference-panel, #lora-panel { border: 1px solid var(--line); border-radius: 6px; padding: 0.65rem; margin-bottom: 1rem; }
+.loras { display: flex; flex-direction: column; gap: 0.4rem; max-height: 16rem; overflow-y: auto; }
+.lora { display: grid; grid-template-columns: auto 1fr auto; gap: 0.25rem 0.5rem; align-items: center; font: 0.72rem var(--font-mono); }
+.lora input[type="number"] { width: 4.5rem; }
+.lora .triggers { grid-column: 2 / 4; color: var(--muted); }
+.lora .triggers button { margin-left: 0.4rem; }
 .references { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .reference { display: flex; flex-direction: column; gap: 0.3rem; font: 0.65rem var(--font-mono); }
 .reference img { width: 80px; height: 80px; object-fit: cover; border-radius: 4px; }

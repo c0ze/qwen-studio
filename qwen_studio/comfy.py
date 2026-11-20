@@ -11,10 +11,10 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from qwen_studio import moss, nitro
+from qwen_studio import moss, nitro, zimage
 
 # Text-to-image models other than Qwen 2512, each a module with workflow() and PREFIX.
-EXTRA_MODELS = {"moss": moss, "nitro": nitro}
+EXTRA_MODELS = {"moss": moss, "nitro": nitro, "zimage": zimage}
 
 COMFY_URL = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188").rstrip("/")
 COMFY_DIR = Path(os.environ.get("COMFYUI_DIR", str(Path.home() / "ComfyUI"))).expanduser().resolve()
@@ -48,7 +48,8 @@ def validate_params(prompt: str, width: int, height: int, steps: int, seed: int,
         raise ValueError("width must be a multiple of 64 from 512 through 1664")
     if not (MIN_SIZE <= height <= MAX_SIZE and height % SIZE_STEP == 0):
         raise ValueError("height must be a multiple of 64 from 512 through 1664")
-    low, high = (nitro.MIN_STEPS, nitro.MAX_STEPS) if model == "nitro" else (MIN_STEPS, MAX_STEPS)
+    module = {"nitro": nitro, "zimage": zimage}.get(model)
+    low, high = (module.MIN_STEPS, module.MAX_STEPS) if module else (MIN_STEPS, MAX_STEPS)
     if not low <= steps <= high:
         raise ValueError(f"steps must be from {low} through {high}")
     if seed < 0 or seed >= 2**63:
@@ -139,7 +140,12 @@ class ComfyClient:
         steps: int,
         seed: int,
         model: str = "qwen",
+        loras: list[tuple[str, float]] | None = None,
     ) -> dict[str, Any]:
+        if loras and model != "zimage":
+            raise ValueError("LoRAs work with Z-Image Turbo only")
+        if model == "zimage":
+            return zimage.workflow(prompt, negative_prompt, width, height, steps, seed, loras or ())
         if model in EXTRA_MODELS:
             return EXTRA_MODELS[model].workflow(prompt, negative_prompt, width, height, steps, seed)
         if model != "qwen":
@@ -209,9 +215,10 @@ class ComfyClient:
         seed: int,
         output_dir: Path = OUTPUT_DIR,
         model: str = "qwen",
+        loras: list[tuple[str, float]] | None = None,
     ) -> Path:
         self.ensure()
-        workflow = self.workflow(prompt, negative_prompt, width, height, steps, seed, model)
+        workflow = self.workflow(prompt, negative_prompt, width, height, steps, seed, model, loras)
         # Reused seeds may cache upstream pixels, but each request needs a new
         # saved asset, including after an earlier asset was deleted.
         prefix = EXTRA_MODELS[model].PREFIX if model in EXTRA_MODELS else FILENAME_PREFIX

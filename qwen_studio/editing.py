@@ -4,8 +4,10 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
-from qwen_studio import moss, nitro
+from qwen_studio import loras, moss, nitro, zimage
 from qwen_studio.comfy import COMFY_DIR, EDIT_MODEL, OUTPUT_DIR
+
+LORA_DIR = COMFY_DIR / "models" / "loras"
 from qwen_studio.imaging import load_image, outpaint_input
 
 
@@ -46,6 +48,28 @@ def _nitro_status(nodes: dict) -> tuple[bool, str]:
     return True, "Ready"
 
 
+def _zimage_status(nodes: dict) -> tuple[bool, str]:
+    if "lumina2" not in _options(nodes, "CLIPLoaderGGUF", "type"):
+        return False, "Install ComfyUI-GGUF with Z-Image (lumina2) support."
+    for node, field, name, folder in [
+        ("UNETLoader", "unet_name", zimage.MODEL, "diffusion_models"),
+        ("CLIPLoaderGGUF", "clip_name", zimage.ENCODER, "text_encoders"),
+        ("VAELoader", "vae_name", zimage.VAE, "vae"),
+    ]:
+        if name not in _options(nodes, node, field):
+            return False, f"Install {name} in ComfyUI/models/{folder}."
+    return True, "Ready"
+
+
+def offered_loras(client) -> list[dict] | None:
+    """The user LoRAs ComfyUI can load, or None when ComfyUI is offline."""
+    try:
+        nodes = client.request_json("/object_info", timeout=5)
+    except (OSError, ValueError, AttributeError):
+        return None
+    return loras.available(_options(nodes, "LoraLoaderModelOnly", "lora_name"), LORA_DIR)
+
+
 def capabilities(client) -> dict:
     try:
         nodes = client.request_json("/object_info", timeout=5)
@@ -53,15 +77,21 @@ def capabilities(client) -> dict:
         available = EDIT_MODEL in models and "TextEncodeQwenImageEditPlus" in nodes
         moss_ready, moss_reason = _moss_status(nodes)
         nitro_ready, nitro_reason = _nitro_status(nodes)
+        zimage_ready, zimage_reason = _zimage_status(nodes)
+        user_loras = loras.available(_options(nodes, "LoraLoaderModelOnly", "lora_name"), LORA_DIR)
         return {"online": True, "edit": available, "reference_limit": 3, "edit_model": EDIT_MODEL,
                 "reason": "Ready" if available else f"Install {EDIT_MODEL} in ComfyUI/models/diffusion_models and ComfyUI-GGUF.",
                 "moss": moss_ready, "moss_model": moss.MODEL, "moss_reason": moss_reason,
                 "nitro": nitro_ready, "nitro_model": nitro.MODEL, "nitro_reason": nitro_reason,
+                "zimage": zimage_ready, "zimage_model": zimage.MODEL, "zimage_reason": zimage_reason,
+                "loras": user_loras, "lora_limit": zimage.MAX_LORAS,
                 "upscale": "Lanczos (resampling, not AI detail generation)"}
     except (OSError, ValueError, AttributeError):
         return {"online": False, "edit": False, "reference_limit": 3, "edit_model": EDIT_MODEL, "reason": "ComfyUI is unavailable",
                 "moss": False, "moss_model": moss.MODEL, "moss_reason": "ComfyUI is unavailable",
-                "nitro": False, "nitro_model": nitro.MODEL, "nitro_reason": "ComfyUI is unavailable", "upscale": "Lanczos"}
+                "nitro": False, "nitro_model": nitro.MODEL, "nitro_reason": "ComfyUI is unavailable",
+                "zimage": False, "zimage_model": zimage.MODEL, "zimage_reason": "ComfyUI is unavailable",
+                "loras": [], "lora_limit": zimage.MAX_LORAS, "upscale": "Lanczos"}
 
 
 def workflow(client, prompt, negative, width, height, steps, seed, inputs, operation):
@@ -119,3 +149,23 @@ def generate_edit(client, sources: list[Path], prompt: str, negative: str, width
     finally:
         for path in paths:
             path.unlink(missing_ok=True)
+
+
+def generate_restyle(client, source: Path, prompt: str, width: int, height: int, steps: int, seed: int,
+                     user_loras: list[tuple[str, float]], denoise: float) -> Path:
+    """Redraw one source image with Z-Image Turbo, keeping its composition (partial denoise)."""
+    client.ensure()
+    folder = COMFY_DIR / "input" / "qwen-studio"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{uuid.uuid4().hex}.png"
+    try:
+        load_image(source).save(path)
+        graph = zimage.workflow(prompt, "", width, height, steps, seed, user_loras,
+                                source=f"qwen-studio/{path.name}", denoise=denoise)
+        graph["10"]["inputs"]["filename_prefix"] = f"{zimage.PREFIX}-Restyle-{uuid.uuid4().hex}"
+        result = client.request_json("/prompt", method="POST", payload={"prompt": graph, "client_id": str(uuid.uuid4())})
+        if result.get("node_errors") or not result.get("prompt_id"):
+            raise RuntimeError(f"ComfyUI rejected restyle: {result}")
+        return client._wait_for_image(result["prompt_id"], OUTPUT_DIR)
+    finally:
+        path.unlink(missing_ok=True)

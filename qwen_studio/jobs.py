@@ -29,6 +29,8 @@ class Job:
     operation: str = "generate"
     model: str = "qwen"
     sources: list[str] = field(default_factory=list)
+    loras: list[tuple[str, float]] = field(default_factory=list)
+    denoise: float | None = None
     snapshots: list[Path] = field(default_factory=list, repr=False)
     workspace: str | None = field(default=None, repr=False)
     status: Status = "queued"
@@ -46,6 +48,8 @@ class Job:
             "operation": self.operation,
             "model": self.model,
             "sources": self.sources,
+            "loras": [{"name": name, "strength": strength} for name, strength in self.loras],
+            "denoise": self.denoise,
             "prompt": self.prompt,
             "negative_prompt": self.negative_prompt,
             "width": self.width,
@@ -104,6 +108,8 @@ class JobRunner:
         seed: int,
         *, project: str = "", operation: str = "generate", sources: list[str] | None = None,
         model: str = "qwen",
+        loras: list[tuple[str, float]] | None = None,
+        denoise: float | None = None,
     ) -> Job:
         if self._stopping:
             raise RuntimeError("Studio is shutting down")
@@ -117,6 +123,7 @@ class JobRunner:
             steps=steps,
             seed=resolve_seed(seed),
             project=project, operation=operation, sources=list(sources or []), model=model,
+            loras=list(loras or []), denoise=denoise,
         )
         if job.sources:
             job.workspace = tempfile.mkdtemp(prefix="qwen-studio-job-")
@@ -188,8 +195,11 @@ class JobRunner:
                         "seed": job.seed,
                         "created_at": job.created_at,
                         "operation": job.operation,
-                        "model": job.model if job.operation == "generate" else None,
+                        "model": job.model if job.operation in {"generate", "restyle"} else None,
                         "source": job.sources[0] if job.sources else None,
+                        # Which LoRAs made an image: games log the provenance of AI concept art.
+                        "loras": [{"name": name, "strength": strength} for name, strength in job.loras],
+                        "denoise": job.denoise,
                     },
                 )
                 job.filename = self.gallery.move(path.name, job.project)
@@ -216,6 +226,10 @@ class JobRunner:
         if job.operation in {"crop", "fit", "upscale"}:
             from qwen_studio.imaging import transform
             return transform(job.snapshots[0], self.gallery.root, job.operation, job.width, job.height)
+        if job.operation == "restyle":
+            from qwen_studio.editing import generate_restyle
+            return generate_restyle(self.client, job.snapshots[0], job.prompt, job.width, job.height,
+                                    job.steps, job.seed, job.loras, job.denoise if job.denoise is not None else 0.6)
         if job.operation in {"edit", "extend"}:
             from qwen_studio.editing import generate_edit
             return generate_edit(self.client, job.snapshots, job.prompt, job.negative_prompt,
@@ -228,4 +242,5 @@ class JobRunner:
             job.steps,
             job.seed,
             model=job.model,
+            loras=job.loras,
         )

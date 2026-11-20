@@ -15,6 +15,15 @@ from tempfile import NamedTemporaryFile
 from typing import Any
 from urllib.parse import quote
 
+def _loras(value: Any) -> list[dict[str, Any]]:
+    """LoRAs recorded in a sidecar, keeping only well-formed entries."""
+    if not isinstance(value, list):
+        return []
+    return [{"name": item["name"], "strength": float(item["strength"])} for item in value[:8]
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+            and isinstance(item.get("strength"), (int, float)) and not isinstance(item.get("strength"), bool)]
+
+
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
 MAX_TEXT_BYTES = 4 * 1024 * 1024
 
@@ -35,6 +44,8 @@ class ImageRecord:
     operation: str | None = None
     source: str | None = None
     model: str | None = None
+    loras: list[dict[str, Any]] | None = None
+    denoise: float | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -53,6 +64,8 @@ class ImageRecord:
             # JSON numbers cannot represent all ComfyUI seeds in JavaScript.
             "seed": str(self.seed) if self.seed is not None else None,
             "steps": self.steps,
+            "loras": self.loras or [],
+            "denoise": self.denoise,
         }
 
 
@@ -395,6 +408,9 @@ class Gallery:
             operation=pick("operation", str),
             source=pick("source", str),
             model=pick("model", str),
+            loras=_loras(sidecar.get("loras")),
+            denoise=sidecar.get("denoise") if isinstance(sidecar.get("denoise"), (int, float))
+            and not isinstance(sidecar.get("denoise"), bool) else None,
         )
 
     def _read_sidecar(self, path: Path) -> dict[str, Any]:
